@@ -1,4 +1,31 @@
+version: '3.8'
 services:
+  app:
+    build: .  # Builds from your Dockerfile
+    container_name: my-auth-app
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - PORT=3000
+      - DB_HOST=host.docker.internal  # DB on host (Windows)
+      - DB_PORT=5432
+      - DB_NAME=keycloak_db
+      - DB_USER=postgres
+      - DB_PASS=Akash
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_REALM=keycloak_auth
+      - KEYCLOAK_CLIENT_ID=keycloakv1
+      - KEYCLOAK_CLIENT_SECRET=tAweFy2M5wPoZVnlRpjJdSalabmDcUdL
+      - KEYCLOAK_ADMIN_CLIENT_ID=admin-cli
+      - KEYCLOAK_ADMIN_CLIENT_SECRET=r2Hc1OiU9UBtq6pxVuQVMnlR9Kxuqpe3
+      - SESSION_SECRET=mysessionsecretcodepassword
+      - JWT_SECRET=secrettokenusedforthejwt
+    depends_on:
+      - keycloak  # Ensures app starts after Keycloak
+    networks:
+      - keycloak-net
+
   keycloak:
     image: quay.io/keycloak/keycloak:25.0
     container_name: keycloak_v2
@@ -10,16 +37,13 @@ services:
       KC_DB_USERNAME: postgres
       KC_DB_PASSWORD: Akash
       KC_DB_SCHEMA: public
-
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
-
       KC_HOSTNAME_STRICT_HTTPS: "false"
       KC_HTTP_ENABLED: "true"
-
     ports:
       - "8080:8080"
-
+    # No depends_on needed since DB is on host
     networks:
       - keycloak-net
 

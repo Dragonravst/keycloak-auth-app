@@ -1,0 +1,105 @@
+pipeline {
+    agent any  // Runs on any available Jenkins agent with Docker
+
+    environment {
+        DOCKER_IMAGE = 'my-auth-app'
+        DOCKER_TAG = "${env.BUILD_NUMBER}"  // Tags with Jenkins build number
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                // Pull code from GitHub
+                checkout scm
+            }
+        }
+
+        stage('Start Dependencies') {
+            steps {
+                script {
+                    // Start Keycloak (and DB if uncommented in docker-compose.yml)
+                    sh 'docker-compose up -d keycloak'
+                    // Wait for services to be ready
+                    sh 'sleep 30'  // Adjust if needed for startup time
+                }
+            }
+        }
+
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    // Build the app's Docker image
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                }
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                script {
+                    // Optional: Run tests inside the container (uncomment if you have tests)
+                    // sh "docker run --rm ${DOCKER_IMAGE}:${DOCKER_TAG} npm test"
+                    echo "Skipping tests for now (add 'npm test' in your Dockerfile or here if needed)"
+                }
+            }
+        }
+
+        stage('Deploy/Run Container') {
+            steps {
+                script {
+                    // Stop and remove old app container
+                    sh "docker stop ${DOCKER_IMAGE} || true"
+                    sh "docker rm ${DOCKER_IMAGE} || true"
+
+                    // Run the new app container, connected to the Keycloak network
+                    sh """
+                    docker run -d --name ${DOCKER_IMAGE} \
+                        -p 3000:3000 \
+                        --network keycloak-net \
+                        -e NODE_ENV=development \
+                        -e PORT=3000 \
+                        -e DB_HOST=host.docker.internal \
+                        -e DB_PORT=5432 \
+                        -e DB_NAME=keycloak_db \
+                        -e DB_USER=postgres \
+                        -e DB_PASS=Akash \
+                        -e KEYCLOAK_URL=http://keycloak:8080 \
+                        -e KEYCLOAK_REALM=keycloak_auth \
+                        -e KEYCLOAK_CLIENT_ID=keycloakv1 \
+                        -e KEYCLOAK_CLIENT_SECRET=tAweFy2M5wPoZVnlRpjJdSalabmDcUdL \
+                        -e KEYCLOAK_ADMIN_CLIENT_ID=admin-cli \
+                        -e KEYCLOAK_ADMIN_CLIENT_SECRET=r2Hc1OiU9UBtq6pxVuQVMnlR9Kxuqpe3 \
+                        -e SESSION_SECRET=mysessionsecretcodepassword \
+                        -e JWT_SECRET=secrettokenusedforthejwt \
+                        ${DOCKER_IMAGE}:${DOCKER_TAG}
+                    """
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                script {
+                    // Wait and verify the app is healthy
+                    sh 'sleep 10'
+                    sh 'curl -f http://localhost:3000/health || exit 1'
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // Cleanup: Remove dangling images and stop containers
+            sh 'docker image prune -f'
+            sh 'docker-compose down || true'  // Stops Keycloak and any other services
+        }
+        success {
+            echo 'Pipeline succeeded!'
+        }
+        failure {
+            echo 'Pipeline failed. Check logs for details.'
+            // Optional: Send notifications (e.g., email) here
+        }
+    }
+}
