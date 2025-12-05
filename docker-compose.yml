@@ -1,0 +1,28 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0
+    container_name: keycloak_v2
+    command:
+      - start-dev
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://host.docker.internal:5432/keycloak_db
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: Akash
+      KC_DB_SCHEMA: public
+
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+      KC_HTTP_ENABLED: "true"
+
+    ports:
+      - "8080:8080"
+
+    networks:
+      - keycloak-net
+
+networks:
+  keycloak-net:
+    driver: bridge
