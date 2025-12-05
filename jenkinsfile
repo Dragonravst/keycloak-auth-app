@@ -1,9 +1,11 @@
 pipeline {
-    agent any  // Runs on any available Jenkins agent
+    agent any  // Runs on any available Jenkins agent with Docker
 
     environment {
         DOCKER_IMAGE = 'my-auth-app'
         DOCKER_TAG = "${env.BUILD_NUMBER}"  // Tags with Jenkins build number
+        KEYCLOAK_CONTAINER = 'keycloak_v2'
+        APP_CONTAINER = 'my-auth-app'
     }
 
     stages {
@@ -17,10 +19,20 @@ pipeline {
         stage('Start Dependencies') {
             steps {
                 script {
-                    // Start Keycloak (and DB if uncommented in docker-compose.yml)
-                    bat 'docker-compose up -d keycloak'
-                    // Wait for services to be ready
-                    bat 'timeout /t 30'  // Wait for 30 seconds
+                    // Check if Keycloak container is running
+                    def keycloakRunning = sh(
+                        script: "docker ps -q -f name=${KEYCLOAK_CONTAINER}",
+                        returnStdout: true
+                    ).trim()
+
+                    if (keycloakRunning) {
+                        echo "Keycloak container is already running, skipping start."
+                    } else {
+                        echo "Starting Keycloak container..."
+                        sh "docker-compose up -d keycloak"
+                        // Wait for services to be ready
+                        sh 'sleep 30'  // Adjust if needed for startup time
+                    }
                 }
             }
         }
@@ -29,7 +41,7 @@ pipeline {
             steps {
                 script {
                     // Build the app's Docker image
-                    bat "docker build -t %DOCKER_IMAGE%:%DOCKER_TAG% ."
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
                 }
             }
         }
@@ -37,8 +49,8 @@ pipeline {
         stage('Run Tests') {
             steps {
                 script {
-                    // Optional: Run tests inside the container (uncomment if you have tests)
-                    // bat "docker run --rm %DOCKER_IMAGE%:%DOCKER_TAG% npm test"
+                    // Optional: Run tests inside the container
+                    // sh "docker run --rm ${DOCKER_IMAGE}:${DOCKER_TAG} npm test"
                     echo "Skipping tests for now (add 'npm test' in your Dockerfile or here if needed)"
                 }
             }
@@ -47,31 +59,39 @@ pipeline {
         stage('Deploy/Run Container') {
             steps {
                 script {
-                    // Stop and remove old app container
-                    bat "docker stop %DOCKER_IMAGE% || exit 0"
-                    bat "docker rm %DOCKER_IMAGE% || exit 0"
+                    // Stop and remove old app container if it exists
+                    def appRunning = sh(
+                        script: "docker ps -q -f name=${APP_CONTAINER}",
+                        returnStdout: true
+                    ).trim()
+
+                    if (appRunning) {
+                        echo "Stopping old app container..."
+                        sh "docker stop ${APP_CONTAINER}"
+                        sh "docker rm ${APP_CONTAINER}"
+                    }
 
                     // Run the new app container
-                    bat """
-                    docker run -d --name %DOCKER_IMAGE% ^
-                        -p 3000:3000 ^
-                        --network keycloak-net ^
-                        -e NODE_ENV=development ^
-                        -e PORT=3000 ^
-                        -e DB_HOST=host.docker.internal ^
-                        -e DB_PORT=5432 ^
-                        -e DB_NAME=keycloak_db ^
-                        -e DB_USER=postgres ^
-                        -e DB_PASS=Akash ^
-                        -e KEYCLOAK_URL=http://keycloak:8080 ^
-                        -e KEYCLOAK_REALM=keycloak_auth ^
-                        -e KEYCLOAK_CLIENT_ID=keycloakv1 ^
-                        -e KEYCLOAK_CLIENT_SECRET=tAweFy2M5wPoZVnlRpjJdSalabmDcUdL ^
-                        -e KEYCLOAK_ADMIN_CLIENT_ID=admin-cli ^
-                        -e KEYCLOAK_ADMIN_CLIENT_SECRET=r2Hc1OiU9UBtq6pxVuQVMnlR9Kxuqpe3 ^
-                        -e SESSION_SECRET=mysessionsecretcodepassword ^
-                        -e JWT_SECRET=secrettokenusedforthejwt ^
-                        %DOCKER_IMAGE%:%DOCKER_TAG%
+                    sh """
+                    docker run -d --name ${APP_CONTAINER} \
+                        -p 3000:3000 \
+                        --network keycloak-net \
+                        -e NODE_ENV=development \
+                        -e PORT=3000 \
+                        -e DB_HOST=host.docker.internal \
+                        -e DB_PORT=5432 \
+                        -e DB_NAME=keycloak_db \
+                        -e DB_USER=postgres \
+                        -e DB_PASS=Akash \
+                        -e KEYCLOAK_URL=http://${KEYCLOAK_CONTAINER}:8080 \
+                        -e KEYCLOAK_REALM=keycloak_auth \
+                        -e KEYCLOAK_CLIENT_ID=keycloakv1 \
+                        -e KEYCLOAK_CLIENT_SECRET=tAweFy2M5wPoZVnlRpjJdSalabmDcUdL \
+                        -e KEYCLOAK_ADMIN_CLIENT_ID=admin-cli \
+                        -e KEYCLOAK_ADMIN_CLIENT_SECRET=r2Hc1OiU9UBtq6pxVuQVMnlR9Kxuqpe3 \
+                        -e SESSION_SECRET=mysessionsecretcodepassword \
+                        -e JWT_SECRET=secrettokenusedforthejwt \
+                        ${DOCKER_IMAGE}:${DOCKER_TAG}
                     """
                 }
             }
@@ -81,8 +101,8 @@ pipeline {
             steps {
                 script {
                     // Wait and verify the app is healthy
-                    bat 'timeout /t 10'
-                    bat 'curl -f http://localhost:3000/health || exit 1'
+                    sh 'sleep 10'
+                    sh 'curl -f http://localhost:3000/health || exit 1'
                 }
             }
         }
@@ -90,15 +110,18 @@ pipeline {
 
     post {
         always {
-            // Cleanup: Remove dangling images and stop containers
-            bat 'docker image prune -f'
-            bat 'docker-compose down || exit 0'
+            // Cleanup dangling images
+            sh 'docker image prune -f'
+            // Stop all services from docker-compose except Keycloak
+            echo 'Stopping any docker-compose services except Keycloak...'
+            sh 'docker-compose down || true'
         }
         success {
             echo 'Pipeline succeeded!'
         }
         failure {
             echo 'Pipeline failed. Check logs for details.'
+            // Optional: send notifications
         }
     }
 }
