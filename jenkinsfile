@@ -1,9 +1,9 @@
 pipeline {
-    agent any  // Runs on any available Jenkins agent
+    agent any
 
     environment {
         DOCKER_IMAGE = 'my-auth-app'
-        DOCKER_TAG = "${env.BUILD_NUMBER}"  // Tags with Jenkins build number
+        DOCKER_TAG = "${env.BUILD_NUMBER}"
         KEYCLOAK_CONTAINER = 'keycloak_v2'
         APP_CONTAINER = 'my-auth-app'
         DOCKER_NETWORK = 'keycloak-net'
@@ -20,7 +20,7 @@ pipeline {
             steps {
                 script {
                     // Check if Keycloak container is running
-                    def keycloakRunning = bat(
+                    def keycloakRunning = sh(
                         script: "docker ps -q -f name=${KEYCLOAK_CONTAINER}",
                         returnStdout: true
                     ).trim()
@@ -29,8 +29,8 @@ pipeline {
                         echo "Keycloak container is already running, skipping start."
                     } else {
                         echo "Starting Keycloak container..."
-                        bat "docker-compose up -d keycloak"
-                        bat "timeout /t 30"  // Wait 30 seconds for Keycloak
+                        sh "docker-compose up -d keycloak"
+                        sh 'sleep 30'  // Wait for Keycloak to be ready
                     }
                 }
             }
@@ -39,8 +39,7 @@ pipeline {
         stage('Create Docker Network') {
             steps {
                 script {
-                    // Check if the network exists
-                    def networkExists = bat(
+                    def networkExists = sh(
                         script: "docker network ls -q -f name=${DOCKER_NETWORK}",
                         returnStdout: true
                     ).trim()
@@ -48,8 +47,8 @@ pipeline {
                     if (networkExists) {
                         echo "Docker network '${DOCKER_NETWORK}' already exists."
                     } else {
-                        echo "Creating Docker network '${DOCKER_NETWORK}'..."
-                        bat "docker network create ${DOCKER_NETWORK}"
+                        sh "docker network create ${DOCKER_NETWORK}"
+                        echo "Docker network '${DOCKER_NETWORK}' created."
                     }
                 }
             }
@@ -57,51 +56,53 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                bat "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                script {
+                    sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} ."
+                }
             }
         }
 
         stage('Run Tests') {
             steps {
-                echo "Skipping tests for now (add 'npm test' if needed)"
+                script {
+                    echo "Skipping tests for now (add 'npm test' if needed)"
+                }
             }
         }
 
         stage('Deploy/Run Container') {
             steps {
                 script {
-                    // Stop and remove old app container if it exists
-                    def appRunning = bat(
+                    def appRunning = sh(
                         script: "docker ps -q -f name=${APP_CONTAINER}",
                         returnStdout: true
                     ).trim()
 
                     if (appRunning) {
                         echo "Stopping old app container..."
-                        bat "docker stop ${APP_CONTAINER}"
-                        bat "docker rm ${APP_CONTAINER}"
+                        sh "docker stop ${APP_CONTAINER}"
+                        sh "docker rm ${APP_CONTAINER}"
                     }
 
-                    // Run the new app container
-                    bat """
-                    docker run -d --name ${APP_CONTAINER} ^
-                        -p 3000:3000 ^
-                        --network ${DOCKER_NETWORK} ^
-                        -e NODE_ENV=development ^
-                        -e PORT=3000 ^
-                        -e DB_HOST=host.docker.internal ^
-                        -e DB_PORT=5432 ^
-                        -e DB_NAME=keycloak_db ^
-                        -e DB_USER=postgres ^
-                        -e DB_PASS=Akash ^
-                        -e KEYCLOAK_URL=http://${KEYCLOAK_CONTAINER}:8080 ^
-                        -e KEYCLOAK_REALM=keycloak_auth ^
-                        -e KEYCLOAK_CLIENT_ID=keycloakv1 ^
-                        -e KEYCLOAK_CLIENT_SECRET=tAweFy2M5wPoZVnlRpjJdSalabmDcUdL ^
-                        -e KEYCLOAK_ADMIN_CLIENT_ID=admin-cli ^
-                        -e KEYCLOAK_ADMIN_CLIENT_SECRET=r2Hc1OiU9UBtq6pxVuQVMnlR9Kxuqpe3 ^
-                        -e SESSION_SECRET=mysessionsecretcodepassword ^
-                        -e JWT_SECRET=secrettokenusedforthejwt ^
+                    sh """
+                    docker run -d --name ${APP_CONTAINER} \
+                        -p 3000:3000 \
+                        --network ${DOCKER_NETWORK} \
+                        -e NODE_ENV=development \
+                        -e PORT=3000 \
+                        -e DB_HOST=host.docker.internal \
+                        -e DB_PORT=5432 \
+                        -e DB_NAME=keycloak_db \
+                        -e DB_USER=postgres \
+                        -e DB_PASS=Akash \
+                        -e KEYCLOAK_URL=http://${KEYCLOAK_CONTAINER}:8080 \
+                        -e KEYCLOAK_REALM=keycloak_auth \
+                        -e KEYCLOAK_CLIENT_ID=keycloakv1 \
+                        -e KEYCLOAK_CLIENT_SECRET=tAweFy2M5wPoZVnlRpjJdSalabmDcUdL \
+                        -e KEYCLOAK_ADMIN_CLIENT_ID=admin-cli \
+                        -e KEYCLOAK_ADMIN_CLIENT_SECRET=r2Hc1OiU9UBtq6pxVuQVMnlR9Kxuqpe3 \
+                        -e SESSION_SECRET=mysessionsecretcodepassword \
+                        -e JWT_SECRET=secrettokenusedforthejwt \
                         ${DOCKER_IMAGE}:${DOCKER_TAG}
                     """
                 }
@@ -110,17 +111,19 @@ pipeline {
 
         stage('Health Check') {
             steps {
-                bat "timeout /t 10"
-                bat "curl -f http://localhost:3000/health || exit 1"
+                script {
+                    sh 'sleep 10'
+                    sh 'curl -f http://localhost:3000/health || exit 1'
+                }
             }
         }
     }
 
     post {
         always {
-            bat "docker image prune -f"
+            sh 'docker image prune -f'
             echo 'Stopping any docker-compose services...'
-            bat "docker-compose down || exit 0"
+            sh 'docker-compose down || true'
         }
         success {
             echo 'Pipeline succeeded!'
